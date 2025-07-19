@@ -1,7 +1,5 @@
 "use client"
 
-import type React from "react"
-
 import { useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -20,19 +18,20 @@ import {
   Eye,
   MessageCircle,
   Search,
-  Hash,
-  Brain,
   Crown,
-  Download,
   Star,
   Users,
   ArrowRight,
   Play,
   FileText,
+  Settings,
+  Download,
 } from "lucide-react"
-import { put, list, del } from "@vercel/blob"
-import { AnalysisHistory } from "@/components/analysis-history"
-import { ImageAnalysis } from "@/components/image-analysis"
+import { AuthProvider, useAuth } from "@/components/auth-provider"
+import { AuthModal } from "@/components/auth-modal"
+import { PricingModal } from "@/components/pricing-modal"
+import { DebugPanel } from "@/components/debug-panel"
+import { isSupabaseConfigured } from "@/lib/supabase"
 
 interface AnalysisResult {
   overallScore: number
@@ -54,111 +53,36 @@ interface AnalysisResult {
   }>
 }
 
-export default function PostAnalysisTool() {
+function PostAnalysisContent() {
+  const { user, loading, signOut } = useAuth()
   const [text, setText] = useState("")
   const [contentType, setContentType] = useState("")
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [savedAnalyses, setSavedAnalyses] = useState<
-    Array<{
-      id: string
-      title: string
-      date: string
-      score: number
-      type: string
-    }>
-  >([])
-  const [showHistory, setShowHistory] = useState(false)
-  const [uploadedImage, setUploadedImage] = useState<string | null>(null)
   const [isPremium, setIsPremium] = useState(false)
-  const [analysisCount, setAnalysisCount] = useState(2)
-
-  const saveAnalysis = async (analysis: AnalysisResult, title: string) => {
-    try {
-      const analysisData = {
-        id: Date.now().toString(),
-        title,
-        date: new Date().toISOString(),
-        text,
-        contentType,
-        analysis,
-        score: analysis.overallScore,
-        type: contentType,
-      }
-
-      const blob = await put(`analysis-${analysisData.id}.json`, JSON.stringify(analysisData), {
-        access: "public",
-      })
-
-      setSavedAnalyses((prev) => [
-        ...prev,
-        {
-          id: analysisData.id,
-          title,
-          date: new Date().toLocaleDateString("pt-BR"),
-          score: analysis.overallScore,
-          type: contentType,
-        },
-      ])
-
-      alert("Análise salva com sucesso!")
-    } catch (error) {
-      console.error("Erro ao salvar análise:", error)
-      alert("Erro ao salvar análise")
-    }
-  }
-
-  const loadSavedAnalyses = async () => {
-    try {
-      const { blobs } = await list({ prefix: "analysis-" })
-      const analyses = blobs.map((blob) => {
-        const id = blob.pathname.replace("analysis-", "").replace(".json", "")
-        return {
-          id,
-          title: `Análise ${id}`,
-          date: new Date(blob.uploadedAt).toLocaleDateString("pt-BR"),
-          score: 0,
-          type: "unknown",
-        }
-      })
-      setSavedAnalyses(analyses)
-    } catch (error) {
-      console.error("Erro ao carregar análises:", error)
-    }
-  }
-
-  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    if (!isPremium) {
-      alert("Análise de imagens disponível apenas no plano Premium")
-      return
-    }
-
-    try {
-      const blob = await put(`image-${Date.now()}.${file.name.split(".").pop()}`, file, {
-        access: "public",
-      })
-      setUploadedImage(blob.url)
-    } catch (error) {
-      console.error("Erro ao fazer upload da imagem:", error)
-      alert("Erro ao fazer upload da imagem")
-    }
-  }
+  const [analysisCount, setAnalysisCount] = useState(user ? 5 : 2)
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [showPricingModal, setShowPricingModal] = useState(false)
+  const [showDebug, setShowDebug] = useState(true)
 
   const analyzeContent = async () => {
     if (!text.trim() || !contentType) return
 
+    // Verificar se usuário está logado (apenas se Supabase estiver configurado)
+    if (isSupabaseConfigured && !user) {
+      setShowAuthModal(true)
+      return
+    }
+
     if (!isPremium && analysisCount <= 0) {
-      alert("Limite de análises gratuitas atingido! Faça upgrade para o plano Premium.")
+      setShowPricingModal(true)
       return
     }
 
     setIsAnalyzing(true)
     await new Promise((resolve) => setTimeout(resolve, 2000))
 
-    if (!isPremium) {
+    if (!isPremium && user) {
       setAnalysisCount((prev) => prev - 1)
     }
 
@@ -344,46 +268,24 @@ export default function PostAnalysisTool() {
     return <XCircle className="w-4 h-4 text-red-500" />
   }
 
-  const deleteAnalysis = async (id: string) => {
-    try {
-      await del(`analysis-${id}.json`)
-      setSavedAnalyses((prev) => prev.filter((analysis) => analysis.id !== id))
-      alert("Análise excluída com sucesso!")
-    } catch (error) {
-      console.error("Erro ao excluir análise:", error)
-      alert("Erro ao excluir análise")
+  const saveAnalysis = () => {
+    if (!analysis) return
+
+    if (!isSupabaseConfigured) {
+      alert("Configure o Supabase para salvar análises!")
+      return
     }
-  }
 
-  const viewAnalysis = (id: string) => {
-    alert(`Visualizar análise ${id} - Funcionalidade em desenvolvimento`)
-  }
+    if (!user) {
+      setShowAuthModal(true)
+      return
+    }
 
-  const [selectedExample, setSelectedExample] = useState<any>(null)
-  const [showExampleModal, setShowExampleModal] = useState(false)
-
-  const viewExample = (example: any, index: number) => {
-    setSelectedExample(example)
-    setShowExampleModal(true)
-  }
-
-  const analyzeExample = (example: any, index: number) => {
-    alert(`Iniciando análise detalhada de: ${example.title}
-
-Métricas identificadas:
-• Engajamento: ${example.engagement}
-• Plataforma: ${example.platform}
-• Formato: Otimizado para ${example.platform}
-
-Pontos fortes detectados:
-• Título chamativo e direto
-• Descrição clara do valor
-• Boa performance de engajamento
-
-Aplicar ao seu conteúdo:
-• Use títulos similares
-• Mantenha descrições concisas
-• Foque no valor para o usuário`)
+    const title = prompt("Digite um título para esta análise:")
+    if (title) {
+      // Simular salvamento
+      alert(`✅ Análise "${title}" salva com sucesso!`)
+    }
   }
 
   const exportAnalysis = () => {
@@ -392,20 +294,6 @@ Aplicar ao seu conteúdo:
       return
     }
     alert("Exportando relatório em PDF...")
-  }
-
-  const upgradeToPremium = () => {
-    alert(`Upgrade para Premium!
-
-Benefícios inclusos:
-• Análises ilimitadas
-• Análise de imagens
-• Exportação de relatórios
-• Suporte prioritário
-• Novos recursos em primeira mão
-
-Apenas R$ 29,90/mês
-Teste grátis por 7 dias`)
   }
 
   return (
@@ -418,11 +306,16 @@ Teste grátis por 7 dias`)
               <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center">
                 <BarChart3 className="w-5 h-5 text-white" />
               </div>
-              <h1 className="text-xl font-semibold text-gray-900">PostAnalysis</h1>
+              <h1 className="text-xl font-semibold text-gray-900">PostAnalysis Pro</h1>
+              {isSupabaseConfigured && (
+                <Badge variant="default" className="bg-green-100 text-green-800">
+                  ✅ Conectado
+                </Badge>
+              )}
             </div>
 
             <div className="flex items-center space-x-4">
-              {!isPremium && <div className="text-sm text-gray-600">{analysisCount} análises restantes</div>}
+              {user && !isPremium && <div className="text-sm text-gray-600">{analysisCount} análises restantes</div>}
 
               <Badge variant={isPremium ? "default" : "secondary"} className="px-3 py-1">
                 {isPremium ? (
@@ -430,27 +323,49 @@ Teste grátis por 7 dias`)
                     <Crown className="w-3 h-3 mr-1" />
                     Premium
                   </>
-                ) : (
+                ) : user ? (
                   "Gratuito"
+                ) : (
+                  "Visitante"
                 )}
               </Badge>
 
-              {!isPremium && (
-                <Button onClick={upgradeToPremium} size="sm" className="bg-slate-900 hover:bg-slate-800">
-                  Upgrade
-                </Button>
+              {isSupabaseConfigured ? (
+                user ? (
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-gray-600">{user.email}</span>
+                    <Button onClick={signOut} size="sm" variant="outline">
+                      Sair
+                    </Button>
+                  </div>
+                ) : (
+                  <Button onClick={() => setShowAuthModal(true)} size="sm" className="bg-slate-900 hover:bg-slate-800">
+                    Entrar
+                  </Button>
+                )
+              ) : (
+                <Badge variant="outline" className="text-orange-600">
+                  Configure Supabase
+                </Badge>
               )}
+
+              <Button onClick={() => setShowDebug(!showDebug)} size="sm" variant="outline" className="text-blue-600">
+                <Settings className="w-4 h-4" />
+              </Button>
             </div>
           </div>
         </div>
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Debug Panel */}
+        {showDebug && <DebugPanel />}
+
         {/* Hero Section */}
         <div className="text-center mb-12">
-          <h2 className="text-3xl font-bold text-gray-900 mb-4">Analise e otimize seu conteúdo</h2>
-          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            Ferramenta avançada para análise de conteúdo de redes sociais com foco em SEO e GEO
+          <h2 className="text-3xl font-bold text-gray-900 mb-4">Suite Completa de Análise de Conteúdo</h2>
+          <p className="text-lg text-gray-600 max-w-3xl mx-auto">
+            Ferramenta avançada com IA para análise, geração e otimização de conteúdo para redes sociais
           </p>
         </div>
 
@@ -505,7 +420,7 @@ Teste grátis por 7 dias`)
               <CardHeader>
                 <CardTitle className="text-lg font-semibold text-gray-900">Análise de Conteúdo</CardTitle>
                 <CardDescription className="text-gray-600">
-                  Cole seu texto e selecione o tipo de conteúdo
+                  Cole seu texto e selecione o tipo de conteúdo para análise
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -547,25 +462,6 @@ Teste grátis por 7 dias`)
                       </SelectContent>
                     </Select>
                   </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Imagem{" "}
-                      {!isPremium && (
-                        <Badge variant="outline" className="ml-2">
-                          Premium
-                        </Badge>
-                      )}
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleImageUpload}
-                        className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-gray-50 file:text-gray-700 hover:file:bg-gray-100"
-                      />
-                    </div>
-                  </div>
                 </div>
 
                 <Button
@@ -605,7 +501,7 @@ Teste grátis por 7 dias`)
                 </div>
 
                 <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                  <Hash className="w-5 h-5 text-emerald-600" />
+                  <Search className="w-5 h-5 text-emerald-600" />
                   <div>
                     <p className="font-medium text-gray-900">SEO</p>
                     <p className="text-sm text-gray-600">Otimização para buscas</p>
@@ -613,7 +509,7 @@ Teste grátis por 7 dias`)
                 </div>
 
                 <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                  <Brain className="w-5 h-5 text-purple-600" />
+                  <BarChart3 className="w-5 h-5 text-purple-600" />
                   <div>
                     <p className="font-medium text-gray-900">GEO</p>
                     <p className="text-sm text-gray-600">Motores Generativos</p>
@@ -628,14 +524,7 @@ Teste grátis por 7 dias`)
                   <CardTitle className="text-lg font-semibold text-gray-900">Ações</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <Button
-                    onClick={() => {
-                      const title = prompt("Digite um título para esta análise:")
-                      if (title) saveAnalysis(analysis, title)
-                    }}
-                    variant="outline"
-                    className="w-full"
-                  >
+                  <Button onClick={saveAnalysis} variant="outline" className="w-full bg-transparent">
                     Salvar Análise
                   </Button>
 
@@ -643,34 +532,11 @@ Teste grátis por 7 dias`)
                     <Download className="w-4 h-4 mr-2" />
                     Exportar PDF {!isPremium && "🔒"}
                   </Button>
-
-                  <Button
-                    onClick={() => {
-                      setShowHistory(!showHistory)
-                      if (!showHistory) loadSavedAnalyses()
-                    }}
-                    variant="outline"
-                    className="w-full"
-                  >
-                    Ver Histórico
-                  </Button>
                 </CardContent>
               </Card>
             )}
           </div>
         </div>
-
-        {showHistory && (
-          <div className="mt-8">
-            <AnalysisHistory analyses={savedAnalyses} onDelete={deleteAnalysis} onView={viewAnalysis} />
-          </div>
-        )}
-
-        {uploadedImage && (
-          <div className="mt-8">
-            <ImageAnalysis imageUrl={uploadedImage} />
-          </div>
-        )}
 
         {/* Analysis Results */}
         {analysis && (
@@ -811,21 +677,11 @@ Teste grátis por 7 dias`)
                           <span className="text-sm font-medium text-emerald-600">{example.engagement}</span>
                         </div>
                         <div className="flex space-x-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="flex-1 bg-transparent"
-                            onClick={() => viewExample(example, index)}
-                          >
+                          <Button size="sm" variant="outline" className="flex-1 bg-transparent">
                             <Eye className="w-3 h-3 mr-1" />
                             Ver
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="flex-1 bg-transparent"
-                            onClick={() => analyzeExample(example, index)}
-                          >
+                          <Button size="sm" variant="outline" className="flex-1 bg-transparent">
                             <Search className="w-3 h-3 mr-1" />
                             Analisar
                           </Button>
@@ -839,79 +695,22 @@ Teste grátis por 7 dias`)
           </div>
         )}
 
-        {/* Modal de Exemplo */}
-        {showExampleModal && selectedExample && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <Card className="max-w-2xl w-full max-h-[80vh] overflow-y-auto bg-white">
-              <CardHeader>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <CardTitle className="text-xl font-semibold text-gray-900">{selectedExample.title}</CardTitle>
-                    <Badge variant="outline" className="mt-2">
-                      {selectedExample.platform}
-                    </Badge>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowExampleModal(false)}
-                    className="text-gray-400 hover:text-gray-600"
-                  >
-                    ✕
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div>
-                  <h4 className="font-medium text-gray-900 mb-2">Descrição</h4>
-                  <p className="text-gray-600">{selectedExample.description}</p>
-                </div>
-
-                <div>
-                  <h4 className="font-medium text-gray-900 mb-2">Performance</h4>
-                  <div className="flex items-center space-x-2">
-                    <TrendingUp className="w-4 h-4 text-emerald-600" />
-                    <span className="text-emerald-600 font-medium">{selectedExample.engagement}</span>
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="font-medium text-gray-900 mb-2">Análise Rápida</h4>
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <ul className="space-y-2 text-sm text-gray-700">
-                      <li>
-                        • <strong>Título:</strong> Direto e focado no benefício
-                      </li>
-                      <li>
-                        • <strong>Formato:</strong> Adequado para a plataforma
-                      </li>
-                      <li>
-                        • <strong>Engajamento:</strong> Acima da média do setor
-                      </li>
-                      <li>
-                        • <strong>Estratégia:</strong> Foco em valor prático
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-
-                <div className="flex space-x-3 pt-4">
-                  <Button
-                    onClick={() => analyzeExample(selectedExample, 0)}
-                    className="flex-1 bg-slate-900 hover:bg-slate-800"
-                  >
-                    <Search className="w-4 h-4 mr-2" />
-                    Análise Detalhada
-                  </Button>
-                  <Button variant="outline" onClick={() => setShowExampleModal(false)} className="flex-1">
-                    Fechar
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+        {/* Modals */}
+        {isSupabaseConfigured && (
+          <>
+            <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
+            <PricingModal isOpen={showPricingModal} onClose={() => setShowPricingModal(false)} />
+          </>
         )}
       </div>
     </div>
+  )
+}
+
+export default function PostAnalysisTool() {
+  return (
+    <AuthProvider>
+      <PostAnalysisContent />
+    </AuthProvider>
   )
 }
